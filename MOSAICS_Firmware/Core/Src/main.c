@@ -68,6 +68,7 @@ uint8_t DAC_1 = 0b00000001;
 uint8_t DAC_2 = 0b00000010;
 uint8_t DAC_3 = 0b00000011;
 uint8_t DAC_4 = 0b00000100;
+uint8_t DAC_NO_OP = 0b00001111;
 
 uint16_t SPAN_HIZ     = 0b0000000000000000;
 uint16_t SPAN_003_125 = 0b0000000000000001;
@@ -156,11 +157,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  uint16_t span_code   = 0x0000 | (WRITE_SPAN_ALL | DAC_4);
-	  uint16_t update_code = 0x0000 | (WRITE_CODE_ALL_UPDATE_ALL | DAC_4);
+	  uint16_t span_code   = 0x0000 | (WRITE_SPAN_ALL | DAC_NO_OP);
+	  uint16_t update_code = 0x0000 | (WRITE_CODE_ALL_UPDATE_ALL | DAC_NO_OP);
 	  uint16_t no_op_code = 0x0000 | (WRITE_NO_OP | DAC_4);
 	  uint16_t mux_code = 0x0000 | (WRITE_MONITOR_MUX | DAC_0);
-	  uint16_t on_code_1 = 0xFFFF;
+	  uint16_t on_code_1 = 0x7FFF;
 	  uint16_t on_code_2 = 0x6969;
 	  uint16_t off_code = 0x0000;
 
@@ -185,13 +186,17 @@ int main(void)
 
 
 	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-	  HAL_SPI_Transmit(&hspi1, (uint8_t*)&span_code, 1, 100);
-	  HAL_SPI_Transmit(&hspi1, (uint8_t*)&SPAN_200_000, 1, 100);
+	  for (uint8_t i = 0; i < 10; i++){
+		  HAL_SPI_Transmit(&hspi1, (uint8_t*)&span_code, 1, 100);
+		  HAL_SPI_Transmit(&hspi1, (uint8_t*)&SPAN_200_000, 1, 100);
+	  }
 	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-	  //HAL_Delay(20);
+
 	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-	  HAL_SPI_Transmit(&hspi1, (uint8_t*)&update_code, 1, 100);
-	  HAL_SPI_Transmit(&hspi1, (uint8_t*)&on_code_1, 1, 100);
+	  for (uint8_t i = 0; i < 10; i++){
+		  HAL_SPI_Transmit(&hspi1, (uint8_t*)&update_code, 1, 100);
+		  HAL_SPI_Transmit(&hspi1, (uint8_t*)&on_code_1, 1, 100);
+	  }
 	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 
 //	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET);

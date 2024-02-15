@@ -57,8 +57,36 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define MUX_SEL0_Pin GPIO_PIN_0
+#define MUX_SEL0_GPIO_Port GPIOA
+#define MUX_SEL1_Pin GPIO_PIN_1
+#define MUX_SEL1_GPIO_Port GPIOA
+#define MUX_SEL2_Pin GPIO_PIN_2
+#define MUX_SEL2_GPIO_Port GPIOA
+#define MUX_SEL3_Pin GPIO_PIN_3
+#define MUX_SEL3_GPIO_Port GPIOA
+#define CS_LD_Pin GPIO_PIN_4
+#define CS_LD_GPIO_Port GPIOA
+#define ADC_CNV_Pin GPIO_PIN_12
+#define ADC_CNV_GPIO_Port GPIOB
+#define ADC_BUSY_Pin GPIO_PIN_15
+#define ADC_BUSY_GPIO_Port GPIOB
+#define LED_Pin GPIO_PIN_5
+#define LED_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+
+struct MOSAICS{
+	double  range;
+	double value;
+	uint8_t  shift;
+	uint8_t  dac;
+	uint8_t mux_code;
+};
+
+#define MAX_CMD_SIZE 10
+
+
 
 /* USER CODE END Private defines */
 

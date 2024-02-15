@@ -95,6 +95,10 @@ uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
 
+uint8_t is_data = 0;
+uint32_t *Len_Trans;
+uint8_t *Buf_Trans;
+
 /* USER CODE END PRIVATE_VARIABLES */
 
 /**
@@ -261,8 +265,22 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
+
+  if (Buf[*Len - 1] == ':'){
+	  is_data = 1;
+	  Buf_Trans = Buf;
+	  Len_Trans = Len;
+
+	  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+  }
+
+  else if (Buf[*Len - 1] != ':'){
+	  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+  }
+
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+
   return (USBD_OK);
   /* USER CODE END 6 */
 }
@@ -316,6 +334,17 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
+
+uint8_t Recv_Data(uint8_t *Buf, uint32_t *Len){
+	if (is_data){
+		*Len = Len_Trans;
+		//memcpy(Len, Len_Trans, 1);
+		memcpy(Buf, Buf_Trans, *Len_Trans);
+		is_data = 0;
+		return 1;
+	}
+	return 0;
+}
 
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

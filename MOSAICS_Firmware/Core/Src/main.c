@@ -133,8 +133,9 @@ uint8_t send_buf[APP_TX_DATA_SIZE];
 
 uint16_t state = 0;
 
-uint8_t ADC_Buffer[3];
+uint16_t ADC_Buffer[2];
 uint32_t ADC_Value;
+double ADC_Convert;
 
 uint8_t count = 0;
 uint8_t curr_char;
@@ -488,7 +489,7 @@ int main(void)
 	  		  off_code = 0x0000;
 	  		  tmp_mux_code = channels[channel_int - 1].mux_code;
 	  		  for (uint8_t i = 0; i < 4; i++){
-	  			  HAL_GPIO_WritePin(GPIOA, mux_sel_pins[i], ((0x01 & tmp_mux_code >> i) ? GPIO_PIN_SET : GPIO_PIN_RESET));
+	  			  //HAL_GPIO_WritePin(GPIOA, mux_sel_pins[i], ((0x01 & tmp_mux_code >> i) ? GPIO_PIN_SET : GPIO_PIN_RESET));
 	  		  }
 	  		  HAL_Delay(1);
 			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
@@ -512,10 +513,12 @@ int main(void)
 			  while(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15) == GPIO_PIN_SET){
 
 			  }
-			  HAL_SPI_Receive(&hspi2, (uint8_t *)ADC_Buffer, 3, 1000);
+			  HAL_Delay(100);
+			  HAL_SPI_Receive(&hspi2, (uint8_t *)ADC_Buffer, 2, 1000);
 			  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
 			  ADC_Value = ((uint32_t)ADC_Buffer[0]) << 9 | ((uint32_t)ADC_Buffer[1]);
-			  sprintf(send_buf, "ADC Reading: %d, %d. Converted Value: %d\n", ADC_Buffer[0], ADC_Buffer[1], ADC_Value);
+			  ADC_Convert = ADC_Value * 0.000154;
+			  sprintf(send_buf, "ADC Reading: %d, %d. Converted Value: %d, Voltage: %f\n", ADC_Buffer[0], ADC_Buffer[1], ADC_Value, ADC_Convert);
 			  CDC_Transmit_FS(send_buf, strlen(send_buf));
 			  state = 0;
 	  		  break;
@@ -769,7 +772,7 @@ static void MX_SPI2_Init(void)
   hspi2.Instance = SPI2;
   hspi2.Init.Mode = SPI_MODE_MASTER;
   hspi2.Init.Direction = SPI_DIRECTION_2LINES_RXONLY;
-  hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi2.Init.DataSize = SPI_DATASIZE_9BIT;
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;

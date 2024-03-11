@@ -116,6 +116,8 @@ uint16_t MUX_OUT4_VOLT = 0b0000000000011100;
 uint16_t current_mux[5] = {0b0000000000000001, 0b0000000000000010, 0b0000000000000011, 0b0000000000000100, 0b0000000000000101};
 uint16_t voltage_mux[5] = {0b0000000000011000, 0b0000000000011001, 0b0000000000011010, 0b0000000000011011, 0b0000000000011100};
 
+uint8_t ADC_SAMPLES = 12;
+
 
 double range_max[8] = {3.125, 6.25, 12.5, 25.0, 50.0, 100.0, 200.0, 300.0};
 
@@ -136,6 +138,7 @@ uint16_t state = 0;
 uint16_t ADC_Buffer[2];
 uint32_t ADC_Value;
 double ADC_Convert;
+double ADC_Avg;
 
 uint8_t count = 0;
 uint8_t curr_char;
@@ -489,7 +492,7 @@ int main(void)
 	  		  off_code = 0x0000;
 	  		  tmp_mux_code = channels[channel_int - 1].mux_code;
 	  		  for (uint8_t i = 0; i < 4; i++){
-	  			  //HAL_GPIO_WritePin(GPIOA, mux_sel_pins[i], ((0x01 & tmp_mux_code >> i) ? GPIO_PIN_SET : GPIO_PIN_RESET));
+	  			  HAL_GPIO_WritePin(GPIOA, mux_sel_pins[i], ((0x01 & tmp_mux_code >> i) ? GPIO_PIN_SET : GPIO_PIN_RESET));
 	  		  }
 	  		  HAL_Delay(1);
 			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
@@ -504,21 +507,23 @@ int main(void)
 					  bit_stream[(i*2) + 1] = off_code;
 				  }
 			  }
-			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-			  HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
-			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+//			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+//			  HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
+//			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			  for (uint8_t samples = 0; samples < ADC_SAMPLES; samples++){
+				  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET); // Set CNV Pin high to init conversion.
+				  while(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15) == GPIO_PIN_SET){
 
-			  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET); // Set CNV Pin high to init conversion.
-			  HAL_Delay(100);
-			  while(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15) == GPIO_PIN_SET){
-
+				  }
+				  HAL_SPI_Receive(&hspi2, (uint8_t *)ADC_Buffer, 2, 1000);
+				  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+				  ADC_Value = ((uint32_t)ADC_Buffer[0]) << 9 | ((uint32_t)ADC_Buffer[1]);
+				  ADC_Convert += (ADC_Value * 0.000154);
 			  }
-			  HAL_Delay(100);
-			  HAL_SPI_Receive(&hspi2, (uint8_t *)ADC_Buffer, 2, 1000);
-			  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-			  ADC_Value = ((uint32_t)ADC_Buffer[0]) << 9 | ((uint32_t)ADC_Buffer[1]);
-			  ADC_Convert = ADC_Value * 0.000154;
-			  sprintf(send_buf, "ADC Reading: %d, %d. Converted Value: %d, Voltage: %f\n", ADC_Buffer[0], ADC_Buffer[1], ADC_Value, ADC_Convert);
+			  ADC_Avg = ADC_Convert/ADC_SAMPLES;
+			  ADC_Avg = (1.04*ADC_Avg) + 0.0198;
+			  ADC_Convert = 0;
+			  sprintf(send_buf, "ADC Converted Value: %d, Voltage: %f\n", ADC_Value, ADC_Avg);
 			  CDC_Transmit_FS(send_buf, strlen(send_buf));
 			  state = 0;
 	  		  break;

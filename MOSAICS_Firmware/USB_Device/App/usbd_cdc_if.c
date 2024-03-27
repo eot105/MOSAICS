@@ -31,7 +31,7 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-
+vcp_buf tx_buf;
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -157,6 +157,10 @@ static int8_t CDC_Init_FS(void)
 {
   /* USER CODE BEGIN 3 */
   /* Set Application Buffers */
+  tx_buf.data = UserTxBufferFS;
+  tx_buf.len = 0;
+  tx_buf.rts = 0;
+  tx_buf.tx_flag = 0;
   USBD_CDC_SetTxBuffer(&hUsbDeviceFS, UserTxBufferFS, 0);
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
   return (USBD_OK);
@@ -335,6 +339,10 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
 
+void vcp_init(){
+	while (tx_buf.data == 0) {}
+}
+
 uint8_t Recv_Data(uint8_t *Buf, uint32_t *Len){
 	if (is_data){
 		*Len = Len_Trans;
@@ -344,6 +352,34 @@ uint8_t Recv_Data(uint8_t *Buf, uint32_t *Len){
 		return 1;
 	}
 	return 0;
+}
+
+int vcp_send_alt(uint8_t *buf, uint16_t len){
+	if (tx_buf.rts == 0 && tx_buf.tx_flag == 0){
+		memcpy(tx_buf.data, buf, len);
+		tx_buf.len = len;
+		tx_buf.rts = 1;
+		return len;
+	}
+	else {
+		return -1;
+	}
+}
+
+void vcp_service_alt(){
+	USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
+	if (hcdc->TxState == 0){
+		if (tx_buf.tx_flag == 1){
+			tx_buf.tx_flag = 0;
+			tx_buf.rts = 0;
+
+		}
+		if (tx_buf.rts == 1){
+			USBD_CDC_SetTxBuffer(&hUsbDeviceFS, tx_buf.data, tx_buf.len);
+			USBD_CDC_TransmitPacket(&hUsbDeviceFS);
+			tx_buf.tx_flag = 1;
+		}
+	}
 }
 
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */

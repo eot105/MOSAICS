@@ -49,8 +49,15 @@
   */
 /* Define size for the receive and transmit buffer over CDC */
 #define APP_RX_DATA_SIZE  2048
-#define APP_TX_DATA_SIZE  2048
+#define APP_TX_DATA_SIZE  64
 /* USER CODE BEGIN EXPORTED_DEFINES */
+
+ typedef struct vcp_buf_type{
+	 uint8_t *data;
+	 uint16_t len;
+	 uint8_t rts;
+	 uint8_t tx_flag;
+ }vcp_buf;
 
 /* USER CODE END EXPORTED_DEFINES */
 
@@ -108,9 +115,7 @@ extern USBD_CDC_ItfTypeDef USBD_Interface_fops_FS;
 uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len);
 
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
-
-uint8_t Recv_Data(uint8_t *Buf, uint32_t *Len);
-
+int vcp_send_alt(uint8_t *buf, uint16_t len);
 /* USER CODE END EXPORTED_FUNCTIONS */
 
 /**

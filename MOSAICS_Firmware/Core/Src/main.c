@@ -67,6 +67,8 @@ uint8_t WRITE_GOLBAL_TOGGLE       = 0b11010000;
 uint8_t WRITE_CONFIG_CMD          = 0b01110000;
 uint8_t WRITE_NO_OP               = 0b11110000;
 
+uint16_t DISBALE_PL = 0b0000000000000100;
+
 uint8_t DAC_0 = 0b00000000;
 uint8_t DAC_1 = 0b00000001;
 uint8_t DAC_2 = 0b00000010;
@@ -136,7 +138,7 @@ uint8_t send_buf[APP_TX_DATA_SIZE];
 uint16_t state = 0;
 
 uint16_t ADC_Buffer[2];
-uint32_t ADC_Value;
+int32_t ADC_Value;
 double ADC_Convert;
 double ADC_Avg;
 
@@ -157,16 +159,18 @@ uint8_t channel_int;
 uint16_t value_int;
 double current_float;
 
-uint8_t send_buf[APP_RX_DATA_SIZE];
-
 uint8_t type_set[MAX_CMD_SIZE] = "SET";
 uint8_t type_get[MAX_CMD_SIZE] = "GET";
 uint8_t command_range[MAX_CMD_SIZE] = "RANGE";
 uint8_t command_current[MAX_CMD_SIZE] = "CURRENT";
 uint8_t command_voltage[MAX_CMD_SIZE] = "VOLTAGE";
 uint8_t command_reference[MAX_CMD_SIZE] = "REFERENCE";
+const uint32_t baudrate = 115200;
+uint8_t USB_CONFIG[7] = {(uint8_t)baudrate>>24, (uint8_t)baudrate>>16, (uint8_t)baudrate>>8, (uint8_t)baudrate, 0x00, 0x00, 0x08};
 
 uint8_t tmp_mux_code;
+
+uint8_t debug = 0;
 
 /* USER CODE END PV */
 
@@ -236,9 +240,11 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_SPI1_Init();
-  MX_USB_Device_Init();
   MX_SPI2_Init();
+  MX_USB_Device_Init();
   /* USER CODE BEGIN 2 */
+
+  vcp_init();
   //RESET ALL OUTPUTS TO 0
 
   tmp_cmd = 0x0000 | (WRITE_CODE_ALL_UPDATE_ALL | DAC_0);
@@ -254,9 +260,6 @@ int main(void)
 
   tmp_cmd = 0x0000 | (WRITE_SPAN_ALL | DAC_0);
   tmp_value = 0x0000 | (SPAN_HIZ);
-  HAL_Delay(1);
-  sprintf(send_buf, "resetting MOASICS");
-  CDC_Transmit_FS(send_buf, strlen(send_buf));
   for (uint8_t i = 0; i < 10; i++){
 	  bit_stream[i*2] = tmp_cmd;
 	  bit_stream[(i*2) + 1] = tmp_value;
@@ -264,6 +267,16 @@ int main(void)
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
   HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+
+  tmp_cmd = 0x0000 | (WRITE_CONFIG_CMD | DAC_0);
+  tmp_value = 0x0000 | (DISBALE_PL);
+  for (uint8_t i = 0; i < 10; i++){
+  	  bit_stream[i*2] = tmp_cmd;
+  	  bit_stream[(i*2) + 1] = tmp_value;
+    }
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+    HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 
 
 
@@ -365,14 +378,14 @@ int main(void)
 	  		  if (count){
 	  			  current_float = atof(value);
 	  			  if (current_float <= channels[channel_int - 1].range){
-	  				  sprintf(send_buf, "Setting output of channel %d to: %fmA\n", channel_int, current_float);
-	  				  CDC_Transmit_FS(send_buf, strlen(send_buf));
+	  				  sprintf(send_buf, "CH: %d, C: %fmA\n", channel_int, current_float);
+	  				  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
 	  				  channels[channel_int - 1].value = current_float;
 	  				  state = 9;
 	  			  }
 	  			  else {
 	  				  sprintf(send_buf, "ERROR %fmA is out of range for channel %d (max is: %fmA)\n", current_float, channel_int, channels[channel_int - 1].range);
-	  				  CDC_Transmit_FS(send_buf, strlen(send_buf));
+	  				  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
 	  				  state = 0;
 	  			  }
 
@@ -386,14 +399,14 @@ int main(void)
 	  		  if (count){
 	  			  value_int = atoi(value);
 	  			  if ((value_int >= 1) && (value_int <= 8)){
-					  sprintf(send_buf, "Setting Range of channel %d to %fmA\n", channel_int, range_max[value_int - 1]);
-					  CDC_Transmit_FS(send_buf, strlen(send_buf));
+					  sprintf(send_buf, "CH: %d, R: %fmA\n", channel_int, range_max[value_int - 1]);
+					  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
 					  channels[channel_int - 1].range = range_max[value_int - 1];
 					  state = 8;
 	  			  }
 	  			  else {
 	  				  sprintf(send_buf, "ERROR %d is an invalid range (1-8 are valid)\n", value_int);
-	  				  CDC_Transmit_FS(send_buf, strlen(send_buf));
+	  				  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){};
 	  				  state = 0;
 	  			  }
 	  		  }
@@ -406,9 +419,11 @@ int main(void)
 	  		  tmp_value = 0x0000 | (spans[value_int - 1]);
 	  		  no_op_code = 0x0000 | (WRITE_NO_OP | DAC_4);
 	  		  off_code = 0x0000;
-	  		  HAL_Delay(1);
-			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
-		      CDC_Transmit_FS(send_buf, strlen(send_buf));
+	  		  if (debug){
+	  			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
+	  			  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  		  }
+
 		      for (uint8_t i = 0; i < 10; i++){
 		    	  if (i == channels[channel_int - 1].shift){
 		    		  bit_stream[i*2] = tmp_cmd;
@@ -422,7 +437,7 @@ int main(void)
 		      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
 		      HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
 		      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-
+//
 	  		  state = 0;
 	  		  break;
 	  	  case 9: //Send Bit Stream Current
@@ -431,9 +446,11 @@ int main(void)
 	  		  //tmp_value = 0xFFFF;
 	  		  no_op_code = 0x0000 | (WRITE_NO_OP | DAC_4);
 	  		  off_code = 0x0000;
-	  		  HAL_Delay(1);
-			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
-		      CDC_Transmit_FS(send_buf, strlen(send_buf));
+	  		  if (debug){
+	  			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
+	  			  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  		  }
+
 		      for (uint8_t i = 0; i < 10; i++){
 		    	  if (i == channels[channel_int - 1].shift){
 		    		  bit_stream[i*2] = tmp_cmd;
@@ -494,9 +511,11 @@ int main(void)
 	  		  for (uint8_t i = 0; i < 4; i++){
 	  			  HAL_GPIO_WritePin(GPIOA, mux_sel_pins[i], ((0x01 & tmp_mux_code >> i) ? GPIO_PIN_SET : GPIO_PIN_RESET));
 	  		  }
-	  		  HAL_Delay(1);
-			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
-			  CDC_Transmit_FS(send_buf, strlen(send_buf));
+	  		  if (debug){
+	  			 sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
+			     while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  		  }
+
 			  for (uint8_t i = 0; i < 10; i++){
 				  if (i == channels[channel_int - 1].shift){
 					  bit_stream[i*2] = tmp_cmd;
@@ -507,9 +526,9 @@ int main(void)
 					  bit_stream[(i*2) + 1] = off_code;
 				  }
 			  }
-//			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-//			  HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
-//			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+			  HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 			  for (uint8_t samples = 0; samples < ADC_SAMPLES; samples++){
 				  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET); // Set CNV Pin high to init conversion.
 				  while(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15) == GPIO_PIN_SET){
@@ -518,13 +537,16 @@ int main(void)
 				  HAL_SPI_Receive(&hspi2, (uint8_t *)ADC_Buffer, 2, 1000);
 				  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
 				  ADC_Value = ((uint32_t)ADC_Buffer[0]) << 9 | ((uint32_t)ADC_Buffer[1]);
+				  if ((ADC_Value & 0b100000000000000000) >> 17 == 1){ //the value is negative
+					  ADC_Value = (ADC_Value & 0b011111111111111111) - 0b100000000000000000;
+				  }
 				  ADC_Convert += (ADC_Value * 0.000154);
 			  }
 			  ADC_Avg = ADC_Convert/ADC_SAMPLES;
-			  ADC_Avg = (1.04*ADC_Avg) + 0.0198;
+//			  ADC_Avg = (1.04*ADC_Avg) + 0.0198;
 			  ADC_Convert = 0;
-			  sprintf(send_buf, "ADC Converted Value: %d, Voltage: %f\n", ADC_Value, ADC_Avg);
-			  CDC_Transmit_FS(send_buf, strlen(send_buf));
+			  sprintf(send_buf, "CH: %d, V: %f\n", channel_int, ADC_Avg);
+			  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
 			  state = 0;
 	  		  break;
 	  	  case 12://send bitstream for get current.
@@ -571,7 +593,7 @@ int main(void)
 		      off_code = 0x0000;
 		      HAL_Delay(1);
 			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
-			  CDC_Transmit_FS(send_buf, strlen(send_buf));
+			  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
 			  for (uint8_t i = 0; i < 10; i++){
 				  if (i == channels[channel_int - 1].shift){
 					  bit_stream[i*2] = tmp_cmd;

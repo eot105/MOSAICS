@@ -83,12 +83,13 @@ struct MOSAICS{
 	uint8_t  dac;
 	uint8_t mux_code;
 	double voltage_coef_1; //first coefficient of the linear equation to correct the voltage error
-	double voltage_ceof_0; //second coefficient of the linear equation to correct the voltage error
+	double voltage_coef_0; //second coefficient of the linear equation to correct the voltage error
 	double current_coef_1; //first coefficient of the linear equation to correct the current error
 	double current_coef_0; //second coefficient of the linear equation to correct the current error
 };
 
 #define MAX_CMD_SIZE 10
+#define ADC_SAMPLES 25
 
 
 

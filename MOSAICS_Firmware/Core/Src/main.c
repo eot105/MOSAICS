@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 
 #include "usbd_cdc_if.h"
+#include "stm32g4xx_hal_flash.h"
 
 /* USER CODE END Includes */
 
@@ -89,7 +90,7 @@ uint16_t SPAN_200_000 = 0b0000000000000111;
 uint16_t SPAN_300_000 = 0b0000000000001111;
 uint16_t SPAN_V_MINUS = 0b0000000000001000;
 
-uint16_t spans[8] = {0b0000000000000001, 0b0000000000000010, 0b0000000000000011, 0b0000000000000100, 0b0000000000000101, 0b0000000000000110, 0b0000000000000111, 0b0000000000001111};
+uint16_t spans[9] = {0b0000000000000001, 0b0000000000000010, 0b0000000000000011, 0b0000000000000100, 0b0000000000000101, 0b0000000000000110, 0b0000000000000111, 0b0000000000001111, 0b0000000000000000};
 
 uint16_t MUX_HIZ       = 0b0000000000000000;
 uint16_t MUX_OUT0_CURR = 0b0000000000000001;
@@ -118,16 +119,16 @@ uint16_t MUX_OUT4_VOLT = 0b0000000000011100;
 uint16_t current_mux[5] = {0b0000000000000001, 0b0000000000000010, 0b0000000000000011, 0b0000000000000100, 0b0000000000000101};
 uint16_t voltage_mux[5] = {0b0000000000011000, 0b0000000000011001, 0b0000000000011010, 0b0000000000011011, 0b0000000000011100};
 
-uint8_t ADC_SAMPLES = 12;
-
-
-double range_max[8] = {3.125, 6.25, 12.5, 25.0, 50.0, 100.0, 200.0, 300.0};
+double range_max[9] = {3.125, 6.25, 12.5, 25.0, 50.0, 100.0, 200.0, 300.0, 0.000};
 
 struct MOSAICS channels[50];
 
 uint8_t shift_pos[50] = {6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 5, 5, 5, 5, 5, 8, 8, 8, 8, 8, 4, 4, 4, 4, 4, 9, 9, 9, 9, 9, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1}; //the order that each channel appears in the SPI shift register in order from ch1 to ch50
 uint8_t dac_pos[50]   = {4, 3, 2, 1, 0, 4, 3, 2, 1, 0, 4, 3, 2, 1, 0, 4, 3, 2, 1, 0, 4, 3, 2, 1, 0, 4, 3, 2, 1, 0, 4, 3, 2, 1, 0, 4, 3, 2, 1, 0, 4, 3, 2, 1, 0, 4, 3, 2, 1, 0}; //the index of the DAC on each LTC2662 that controls each channel in order from ch1 to ch50
 uint8_t mux_codes[50] = {0x05, 0x05, 0x05, 0x05, 0x05, 0x07, 0x07, 0x07, 0x07, 0x07, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0D, 0x0D, 0x0D, 0x0D, 0x0D, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0B, 0x0B, 0x0B, 0x0B, 0x0B, 0x08, 0x08, 0x08, 0x08, 0x08, 0x09, 0x09, 0x09, 0x09, 0x09, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00};
+uint8_t mux_codes_temp[10] = {0x0B, 0x0D, 0x07, 0x05, 0x0C, 0x0A, 0x08, 0x01, 0x00, 0x09}; //External MUX turn on when addressing chips by their number for die temp measurement
+double temp_voltage_coef_1[10];
+double temp_voltage_coef_0[10];
 uint8_t mux_sel_pins[4] = {GPIO_PIN_2, GPIO_PIN_1, GPIO_PIN_0, GPIO_PIN_3};
 
 uint8_t Buf[APP_RX_DATA_SIZE];
@@ -139,8 +140,11 @@ uint16_t state = 0;
 
 uint16_t ADC_Buffer[2];
 int32_t ADC_Value;
+int32_t ADC_Filter;
+int32_t ADC_Filter_Save[ADC_SAMPLES];
 double ADC_Convert;
 double ADC_Avg;
+double core_temp;
 
 uint8_t count = 0;
 uint8_t curr_char;
@@ -155,9 +159,14 @@ uint8_t type[MAX_CMD_SIZE];
 uint8_t command[MAX_CMD_SIZE];
 uint8_t channel[MAX_CMD_SIZE];
 uint8_t value[MAX_CMD_SIZE];
+uint8_t coe_1[MAX_CMD_SIZE];
+uint8_t coe_2[MAX_CMD_SIZE];
+uint8_t mode[MAX_CMD_SIZE];
 uint8_t channel_int;
 uint16_t value_int;
 double current_float;
+double current_float_adj;
+double coe_float[2];
 
 uint8_t type_set[MAX_CMD_SIZE] = "SET";
 uint8_t type_get[MAX_CMD_SIZE] = "GET";
@@ -165,12 +174,31 @@ uint8_t command_range[MAX_CMD_SIZE] = "RANGE";
 uint8_t command_current[MAX_CMD_SIZE] = "CURRENT";
 uint8_t command_voltage[MAX_CMD_SIZE] = "VOLTAGE";
 uint8_t command_reference[MAX_CMD_SIZE] = "REFERENCE";
+uint8_t command_core_temp[MAX_CMD_SIZE] = "TEMP";
+uint8_t command_cal[MAX_CMD_SIZE] = "CAL";
+uint8_t command_write_flash[MAX_CMD_SIZE] = "WRITE";
+uint8_t command_mode[MAX_CMD_SIZE] = "MODE";
+uint8_t command_echo[MAX_CMD_SIZE] = "ECHO";
+uint8_t command_debug[MAX_CMD_SIZE] = "DEBUG";
 const uint32_t baudrate = 115200;
 uint8_t USB_CONFIG[7] = {(uint8_t)baudrate>>24, (uint8_t)baudrate>>16, (uint8_t)baudrate>>8, (uint8_t)baudrate, 0x00, 0x00, 0x08};
 
 uint8_t tmp_mux_code;
 
-uint8_t debug = 0;
+
+
+uint32_t voltage_write_start = 0x0807F800;
+uint32_t current_write_start = 0x0807F000;
+
+double voltage_coe_read[100];
+double current_coe_read[100];
+
+double voltage_coe_write[100];
+double current_coe_write[100];
+
+uint8_t cal_mode = 0;
+uint8_t debug_mode = 0;
+uint8_t echo_mode = 0;
 
 /* USER CODE END PV */
 
@@ -198,6 +226,43 @@ uint8_t Extract_Data(uint8_t *Buf, uint8_t *Data, uint32_t Start){
 		return count + Start;
 	}
 	return 0;
+}
+
+//write some number of 32 bit words to flash at some address
+uint32_t Write_To_Flash(uint32_t start_addr, uint64_t *data, uint16_t words, uint32_t start_page, uint32_t end_page){
+	static FLASH_EraseInitTypeDef erase_struct;
+	uint32_t page_error;
+	uint32_t so_far = 0;
+
+	HAL_FLASH_Unlock();
+
+	erase_struct.TypeErase = FLASH_TYPEERASE_PAGES;
+	erase_struct.Page = start_page;
+	erase_struct.NbPages = end_page;
+
+	if (HAL_FLASHEx_Erase(&erase_struct, &page_error) != HAL_OK){
+		return HAL_FLASH_GetError();
+	}
+
+	while (so_far < words){
+		if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, start_addr, data[so_far]) == HAL_OK){
+			start_addr += 8;
+			so_far++;
+		}
+		else {
+			return HAL_FLASH_GetError();
+		}
+	}
+
+	HAL_FLASH_Lock();
+	return 0;
+}
+
+void Read_From_Flash(uint32_t start_addr, double *rx_buf, uint16_t words){
+	for (uint16_t i = 0; i < words; i++){
+		rx_buf[i] = *(__IO double *)start_addr;
+		start_addr += 8;
+	}
 }
 
 /* USER CODE END 0 */
@@ -245,6 +310,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   vcp_init();
+
   //RESET ALL OUTPUTS TO 0
 
   tmp_cmd = 0x0000 | (WRITE_CODE_ALL_UPDATE_ALL | DAC_0);
@@ -279,6 +345,21 @@ int main(void)
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 
 
+  Read_From_Flash(voltage_write_start, voltage_coe_read, 100); //read 100 64bit words from flash
+  for (uint8_t i = 0; i < 50; i++){
+	  channels[i].voltage_coef_1 = voltage_coe_read[i * 2];
+	  channels[i].voltage_coef_0 = voltage_coe_read[(i * 2) + 1];
+	  temp_voltage_coef_1[9-channels[i].shift] = voltage_coe_read[i * 2];
+	  temp_voltage_coef_0[9-channels[i].shift] = voltage_coe_read[(i * 2) + 1];
+  }
+
+  Read_From_Flash(current_write_start, current_coe_read, 100); //read 100 64bit words from flash
+  for (uint8_t i = 0; i < 50; i++){
+	  channels[i].current_coef_1 = current_coe_read[i * 2];
+	  channels[i].current_coef_0 = current_coe_read[(i * 2) + 1];
+  }
+
+
 
   /* USER CODE END 2 */
 
@@ -294,6 +375,9 @@ int main(void)
 	  			  memset(command, 0, sizeof command);
 	  			  memset(channel, 0, sizeof channel);
 	  			  memset(value, 0, sizeof value);
+	  			  memset(coe_1, 0, sizeof coe_1);
+	  			  memset(coe_2, 0, sizeof coe_2);
+	  			  memset(mode, 0, sizeof mode);
 	  			  state = 1;
 	  		  }
 	  		  break;
@@ -324,7 +408,7 @@ int main(void)
 	  			  state = 0;
 	  		  }
 	  		  break;
-	  	  case 3:
+	  	  case 3: //SET
 	  		  count = Extract_Data(Buf, command, count + 1);
 	  		  if (count){
 	  			  if (!(strcmp(command, command_range))){ //RANGE
@@ -332,6 +416,12 @@ int main(void)
 	  			  }
 	  			  else if (!strcmp(command, command_current)){ //CURRENT
 	  				  state = 5;
+	  			  }
+	  			  else if (!strcmp(command, command_cal)){ //CALIBRATION
+	  				  state = 14;
+	  			  }
+	  			  else if (!strcmp(command, command_mode)){ //MODE
+	  				  state = 17;
 	  			  }
 	  			  else {
 	  				  state = 0;
@@ -377,9 +467,17 @@ int main(void)
 	  		  count = Extract_Data(Buf, value, count + 1);
 	  		  if (count){
 	  			  current_float = atof(value);
+	  			  if (!cal_mode){
+	  				  current_float_adj = (current_float * channels[channel_int - 1].current_coef_1) + channels[channel_int - 1].current_coef_0;
+	  			  }
+	  			  else {
+	  				  current_float_adj = current_float;
+	  			  }
 	  			  if (current_float <= channels[channel_int - 1].range){
-	  				  sprintf(send_buf, "CH: %d, C: %fmA\n", channel_int, current_float);
-	  				  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  				  if (echo_mode){
+	  					sprintf(send_buf, "CH: %d, C: %fmA\n", channel_int, current_float);
+	  			        while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  				  }
 	  				  channels[channel_int - 1].value = current_float;
 	  				  state = 9;
 	  			  }
@@ -398,14 +496,17 @@ int main(void)
 	  		  count  = Extract_Data(Buf, value, count + 1);
 	  		  if (count){
 	  			  value_int = atoi(value);
-	  			  if ((value_int >= 1) && (value_int <= 8)){
-					  sprintf(send_buf, "CH: %d, R: %fmA\n", channel_int, range_max[value_int - 1]);
-					  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  			  if ((value_int >= 1) && (value_int <= 9)){
+	  				  if (echo_mode){
+	  					sprintf(send_buf, "CH: %d, R: %fmA\n", channel_int, range_max[value_int - 1]);
+	  					while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  				  }
+
 					  channels[channel_int - 1].range = range_max[value_int - 1];
 					  state = 8;
 	  			  }
 	  			  else {
-	  				  sprintf(send_buf, "ERROR %d is an invalid range (1-8 are valid)\n", value_int);
+	  				  sprintf(send_buf, "ERROR %d is an invalid range (1-9 are valid)\n", value_int);
 	  				  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){};
 	  				  state = 0;
 	  			  }
@@ -419,7 +520,7 @@ int main(void)
 	  		  tmp_value = 0x0000 | (spans[value_int - 1]);
 	  		  no_op_code = 0x0000 | (WRITE_NO_OP | DAC_4);
 	  		  off_code = 0x0000;
-	  		  if (debug){
+	  		  if (debug_mode){
 	  			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
 	  			  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
 	  		  }
@@ -442,11 +543,11 @@ int main(void)
 	  		  break;
 	  	  case 9: //Send Bit Stream Current
 	  		  tmp_cmd = 0x0000 | (WRITE_CODE_N_UPDATE_N | dacs[channels[channel_int - 1].dac]);
-	  		  tmp_value = 0xFFFF * (current_float/channels[channel_int - 1].range);
+	  		  tmp_value = 0xFFFF * (current_float_adj/channels[channel_int - 1].range);
 	  		  //tmp_value = 0xFFFF;
 	  		  no_op_code = 0x0000 | (WRITE_NO_OP | DAC_4);
 	  		  off_code = 0x0000;
-	  		  if (debug){
+	  		  if (debug_mode){
 	  			  sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
 	  			  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
 	  		  }
@@ -478,6 +579,9 @@ int main(void)
 	  			  }
 	  			  else if (!(strcmp(command, command_reference))){
 	  				  state = 13;
+	  			  }
+	  			  else if (!(strcmp(command, command_core_temp))){
+	  				  state = 18;
 	  			  }
 	  			  else {
 	  				  state = 0;
@@ -511,7 +615,7 @@ int main(void)
 	  		  for (uint8_t i = 0; i < 4; i++){
 	  			  HAL_GPIO_WritePin(GPIOA, mux_sel_pins[i], ((0x01 & tmp_mux_code >> i) ? GPIO_PIN_SET : GPIO_PIN_RESET));
 	  		  }
-	  		  if (debug){
+	  		  if (debug_mode){
 	  			 sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
 			     while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
 	  		  }
@@ -530,6 +634,7 @@ int main(void)
 			  HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
 			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 			  for (uint8_t samples = 0; samples < ADC_SAMPLES; samples++){
+				  HAL_Delay(1);
 				  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET); // Set CNV Pin high to init conversion.
 				  while(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15) == GPIO_PIN_SET){
 
@@ -540,13 +645,23 @@ int main(void)
 				  if ((ADC_Value & 0b100000000000000000) >> 17 == 1){ //the value is negative
 					  ADC_Value = (ADC_Value & 0b011111111111111111) - 0b100000000000000000;
 				  }
-				  ADC_Convert += (ADC_Value * 0.000154);
+				  //ADC_Filter += ADC_Value;
+				  ADC_Filter_Save[samples] = ADC_Value;
 			  }
-			  ADC_Avg = ADC_Convert/ADC_SAMPLES;
-//			  ADC_Avg = (1.04*ADC_Avg) + 0.0198;
+			  for (uint8_t i = 0; i < ADC_SAMPLES; i++){
+				  ADC_Filter += ADC_Filter_Save[i];
+			  }
+			  ADC_Filter = ADC_Filter/(ADC_SAMPLES);
+			  ADC_Avg = ADC_Filter*0.000154;
+			  if (!cal_mode){
+				  ADC_Avg = (ADC_Avg*channels[channel_int - 1].voltage_coef_1) + channels[channel_int - 1].voltage_coef_0;
+			  }
 			  ADC_Convert = 0;
+			  ADC_Filter = 0;
+
 			  sprintf(send_buf, "CH: %d, V: %f\n", channel_int, ADC_Avg);
 			  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+			  ADC_Avg = 0;
 			  state = 0;
 	  		  break;
 	  	  case 12://send bitstream for get current.
@@ -609,66 +724,222 @@ int main(void)
 			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 			  state = 0;
 	  		  break;
+	  	  case 14:
+	  		  count = Extract_Data(Buf, command, count + 1);
+	  		  if (count){
+	  			  if (!strcmp(command, command_voltage)){
+	  				  state = 15;
+	  			  }
+	  			  else if (!strcmp(command, command_current)){
+	  				  state = 16;
+	  			  }
+	  			  else {
+	  				  state = 0;
+	  			  }
+	  		  }
+	  		  else {
+	  			  state = 0;
+	  		  }
+	  		  break;
+	  	  case 15:
+	  		  //Write voltage coe to FLASH
+	  		  count = Extract_Data(Buf, channel, count + 1);
+	  		  if (count){
+				  if (!strcmp(channel, command_write_flash)){
+					  Write_To_Flash(voltage_write_start, voltage_coe_write, 100, 127, 127);
+					  Read_From_Flash(voltage_write_start, voltage_coe_read, 100); //read 100 64bit words from flash
+					  for (uint8_t i = 0; i < 50; i++){
+						  channels[i].voltage_coef_1 = voltage_coe_read[i * 2];
+						  channels[i].voltage_coef_0 = voltage_coe_read[(i * 2) + 1];
+					  }
+					  sprintf(send_buf, "Finished write voltage coefficients");
+					  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+				  }
+				  else {
+					  channel_int = atoi(channel);
+					  if ((channel_int >= 1)  && (channel_int <= 50)){
+						  count = Extract_Data(Buf, coe_1, count + 1);
+						  if (!count){
+							  state = 0;
+							  break;
+						  }
+						  count = Extract_Data(Buf, coe_2, count + 1);
+						  if (!count){
+							  state = 0;
+							  break;
+						  }
+						  voltage_coe_write[(channel_int - 1) * 2] = atof(coe_1);
+						  voltage_coe_write[((channel_int - 1) * 2) + 1] = atof(coe_2);
+
+						  sprintf(send_buf, "CH: %d, stage voltage, x^1: %f, x^0: %f\n", channel_int, voltage_coe_write[(channel_int - 1) * 2], voltage_coe_write[((channel_int - 1) * 2) + 1]);
+						  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+					  }
+					  else {
+						  state = 0;
+					  }
+				  }
+	  		  }
+	  		  else {
+	  			  state = 0;
+	  		  }
+	  		  state = 0;
+	  		  break;
+	  	  case 16:
+	  		  //write current coe to FLASH
+	  		  count = Extract_Data(Buf, channel, count + 1);
+	  		  if (count){
+				  if (!strcmp(channel, command_write_flash)){
+					  Write_To_Flash(current_write_start, current_coe_write, 100, 126, 126);
+					  Read_From_Flash(current_write_start, current_coe_read, 100); //read 100 64bit words from flash
+					  for (uint8_t i = 0; i < 50; i++){
+						  channels[i].current_coef_1 = current_coe_read[i * 2];
+						  channels[i].current_coef_0 = current_coe_read[(i * 2) + 1];
+					  }
+					  sprintf(send_buf, "Finished write current coefficients");
+					  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+				  }
+				  else {
+					  channel_int = atoi(channel);
+					  if ((channel_int >= 1)  && (channel_int <= 50)){
+						  count = Extract_Data(Buf, coe_1, count + 1);
+						  if (!count){
+							  state = 0;
+							  break;
+						  }
+						  count = Extract_Data(Buf, coe_2, count + 1);
+						  if (!count){
+							  state = 0;
+							  break;
+						  }
+						  current_coe_write[(channel_int - 1) * 2] = atof(coe_1);
+						  current_coe_write[((channel_int - 1) * 2) + 1] = atof(coe_2);
+
+						  sprintf(send_buf, "CH: %d, stage current, x^1: %f, x^0: %f\n", channel_int, current_coe_write[(channel_int - 1) * 2], current_coe_write[((channel_int - 1) * 2) + 1]);
+						  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+					  }
+					  else {
+						  state = 0;
+					  }
+				  }
+	  		  }
+	  		  else {
+	  			  state = 0;
+	  		  }
+	  		  state = 0;
+	  		  break;
+	  	  case 17:
+	  		  //set cal mode (returns raw adc voltage)
+	  		  count  = Extract_Data(Buf, mode, count + 1);
+	  		  if (count){
+	  			  count = Extract_Data(Buf, channel, count + 1);
+	  			  if (count){
+	  				  channel_int = atoi(channel);
+	  				  if (channel_int != 1 && channel_int != 0){
+	  					  state = 0;
+	  					  break;
+	  				  }
+	  				if (!strcmp(mode, command_cal)){
+					  cal_mode = atoi(channel);
+					  sprintf(send_buf, "Cal Mode: %d\n", cal_mode);
+					  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  				}
+	  				else if (!strcmp(mode, command_echo)){
+					  echo_mode = atoi(channel);
+					  sprintf(send_buf, "Echo Mode: %d\n", echo_mode);
+					  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  				}
+	  				else if (!strcmp(mode, command_debug)){
+					  debug_mode = atoi(channel);
+					  sprintf(send_buf, "Debug Mode: %d\n", debug_mode);
+					  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+	  				}
+	  				else{
+	  					state = 0;
+	  			  }
+	  			}
+				else {
+					state = 0;
+				  }
+	  		  }
+	  		  state = 0;
+	  		  break;
+	  	  case 18:
+	  		  count = Extract_Data(Buf, channel, count + 1);
+			  if (count){
+				  channel_int = atoi(channel);
+				  if ((channel_int >= 1) && (channel_int <= 10)){
+
+				  }
+				  else {
+					  state = 0;
+					  break;
+				  }
+			  }
+			  else {
+				  state = 0;
+				  break;
+			  }
+			  tmp_cmd = 0x0000 | (WRITE_MONITOR_MUX);
+			  tmp_value = 0x0000 | (MUX_TEMP);
+			  no_op_code = 0x0000 | (WRITE_NO_OP | DAC_4);
+			  off_code = 0x0000;
+			  tmp_mux_code = mux_codes_temp[channel_int-1];
+			  for (uint8_t i = 0; i < 4; i++){
+				  HAL_GPIO_WritePin(GPIOA, mux_sel_pins[i], ((0x01 & tmp_mux_code >> i) ? GPIO_PIN_SET : GPIO_PIN_RESET));
+			  }
+			  if (debug_mode){
+				 sprintf(send_buf, "sending %d, %d\n", tmp_cmd, tmp_value);
+				 while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+			  }
+
+			  for (uint8_t i = 0; i < 10; i++){
+				  if (i == 10-channel_int){
+					  bit_stream[i*2] = tmp_cmd;
+					  bit_stream[(i*2) + 1] = tmp_value;
+				  }
+				  else {
+					  bit_stream[i*2] = no_op_code;
+					  bit_stream[(i*2) + 1] = off_code;
+				  }
+			  }
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+			  HAL_SPI_Transmit(&hspi1, bit_stream, 20, 100);
+			  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			  for (uint8_t samples = 0; samples < ADC_SAMPLES; samples++){
+				  HAL_Delay(4);
+				  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET); // Set CNV Pin high to init conversion.
+				  while(HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15) == GPIO_PIN_SET){
+
+				  }
+				  HAL_SPI_Receive(&hspi2, (uint8_t *)ADC_Buffer, 2, 1000);
+				  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
+				  ADC_Value = ((uint32_t)ADC_Buffer[0]) << 9 | ((uint32_t)ADC_Buffer[1]);
+				  if ((ADC_Value & 0b100000000000000000) >> 17 == 1){ //the value is negative
+					  ADC_Value = (ADC_Value & 0b011111111111111111) - 0b100000000000000000;
+				  }
+				  //ADC_Filter += ADC_Value;
+				  ADC_Filter_Save[samples] = ADC_Value;
+			  }
+			  for (uint8_t i = 0; i < ADC_SAMPLES; i++){
+				  ADC_Filter += ADC_Filter_Save[i];
+			  }
+			  ADC_Filter = ADC_Filter/(ADC_SAMPLES);
+			  ADC_Avg = ADC_Filter*0.000154;
+			  if (!cal_mode){
+				  ADC_Avg = (ADC_Avg*temp_voltage_coef_1[channel_int - 1]) + temp_voltage_coef_0[channel_int - 1];
+			  }
+			  ADC_Convert = 0;
+			  ADC_Filter = 0;
+
+			  core_temp = 25+(1.4-ADC_Avg)/(0.0037);//from datasheet
+
+			  sprintf(send_buf, "Chip: %d, Temp: %f degC\n", channel_int, core_temp);
+			  while(vcp_send_alt(send_buf, strlen(send_buf)) == -1){}
+			  ADC_Avg = 0;
+			  core_temp = 0;
+			  state = 0;
+			  break;
 	  }
-//	  if (Recv_Data(Buf, &Len)){
-//		  if(Buf[Len-1] == ':'){
-//			  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
-//		  }
-//	  }
-
-//	  uint16_t span_code   = 0x0000 | (WRITE_SPAN_ALL | DAC_NO_OP);
-//	  uint16_t update_code = 0x0000 | (WRITE_CODE_ALL_UPDATE_ALL | DAC_NO_OP);
-//	  uint16_t no_op_code = 0x0000 | (WRITE_NO_OP | DAC_4);
-//	  uint16_t mux_code = 0x0000 | (WRITE_MONITOR_MUX | DAC_0);
-//	  uint16_t on_code_1 = 0x7FFF;
-//	  uint16_t on_code_2 = 0x6969;
-//	  uint16_t off_code = 0x0000;
-//
-//	  uint16_t set_shift_reg_span[20];
-//	  uint16_t set_shift_reg_value[20];
-//	  uint16_t set_mux_code[20];
-//	  for (uint8_t i = 0; i < 20; i = i + 2){
-//		  set_shift_reg_span[i] = span_code;
-//		  set_shift_reg_span[i+1] = SPAN_V_MINUS;
-//	  }
-//
-//	  for (uint8_t i = 0; i < 20; i = i + 2){
-//		  set_shift_reg_value[i] = no_op_code;
-//		  set_shift_reg_value[i+1] = off_code;
-//	  }
-//
-//	  for (uint8_t i = 0; i < 20; i = i + 2){
-//		  set_mux_code[i] = mux_code;
-//		  set_mux_code[i+1] = MUX_OUT4_CURR;
-//	  }
-//
-//
-//
-//	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-//	  for (uint8_t i = 0; i < 10; i++){
-//		  HAL_SPI_Transmit(&hspi1, (uint8_t*)&span_code, 1, 100);
-//		  HAL_SPI_Transmit(&hspi1, (uint8_t*)&SPAN_200_000, 1, 100);
-//	  }
-//	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-//
-//	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
-//	  for (uint8_t i = 0; i < 10; i++){
-//		  HAL_SPI_Transmit(&hspi1, (uint8_t*)&update_code, 1, 100);
-//		  HAL_SPI_Transmit(&hspi1, (uint8_t*)&on_code_1, 1, 100);
-//	  }
-//	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
-
-//	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET);
-//	  HAL_SPI_Transmit(&hspi1, (uint8_t*)set_shift_reg_span, 20, 100);
-//	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_SET);
-//
-//	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET);
-//	  HAL_SPI_Transmit(&hspi1, (uint8_t*)set_shift_reg_value, 20, 100);
-//	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_SET);
-//
-//	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET);
-//	  HAL_SPI_Transmit(&hspi1, (uint8_t*)set_mux_code, 20, 100);
-//	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_SET);
 
     /* USER CODE END WHILE */
 
@@ -763,7 +1034,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
